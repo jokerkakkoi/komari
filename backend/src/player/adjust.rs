@@ -8,7 +8,7 @@ use super::{
 };
 use crate::{
     ActionKeyDirection, ActionKeyWith,
-    bridge::KeyKind,
+    bridge::{InputKeyOptions, KeyKind},
     ecs::Resources,
     minimap::Minimap,
     player::{
@@ -48,13 +48,16 @@ impl Adjusting {
         Adjusting { moving, ..self }
     }
 
-    fn update_adjusting(&mut self, resources: &Resources, keys: Option<(KeyKind, KeyKind)>) {
+    fn update_adjusting(&mut self, resources: &mut Resources, key: Option<KeyKind>) {
         self.adjust_timeout =
             match next_timeout_lifecycle(self.adjust_timeout, ADJUSTING_SHORT_TIMEOUT) {
                 Lifecycle::Started(timeout) => {
-                    if let Some((up_key, down_key)) = keys {
-                        resources.input.send_key_up(up_key);
-                        resources.input.send_key(down_key);
+                    resources.input.send_key_up(KeyKind::Left);
+                    resources.input.send_key_up(KeyKind::Right);
+                    if let Some(key) = key {
+                        resources
+                            .input
+                            .send_key_with_options(key, InputKeyOptions::default().down_ms(80));
                     }
                     timeout
                 }
@@ -69,7 +72,7 @@ impl Adjusting {
 /// This state just walks towards the destination. If [`Moving::exact`] is true,
 /// then it will perform small movement to ensure the `x` is as close as possible.
 pub fn update_adjusting_state(
-    resources: &Resources,
+    resources: &mut Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
 ) {
@@ -130,8 +133,8 @@ pub fn update_adjusting_state(
                         resources.input.send_key_down(down_key);
                         context.last_known_direction = dir;
                     }
-                    (false, true, Some((down_key, up_key, dir))) => {
-                        adjusting.update_adjusting(resources, Some((up_key, down_key)));
+                    (false, true, Some((down_key, _, dir))) => {
+                        adjusting.update_adjusting(resources, Some(down_key));
                         context.last_known_direction = dir;
                     }
                     _ => {
@@ -163,7 +166,7 @@ pub fn update_adjusting_state(
 }
 
 fn update_from_action(
-    resources: &Resources,
+    resources: &mut Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
     moving: Moving,
@@ -262,9 +265,9 @@ mod tests {
         player.context.is_stationary = true;
         player.state = Player::Adjusting(Adjusting::new(Moving::new(pos, dest, false, None)));
 
-        let resources = Resources::new(None, None);
+        let mut resources = Resources::new(None, None);
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         // Should remain in Adjusting state (started branch moves it into Adjusting with moving started)
         assert_matches!(player.state, Player::Adjusting(_));
@@ -278,7 +281,7 @@ mod tests {
         keys.expect_send_key_up().with(eq(KeyKind::Left)).once();
         keys.expect_send_key_down().with(eq(KeyKind::Right)).once();
 
-        let resources = Resources::new(Some(keys), None);
+        let mut resources = Resources::new(Some(keys), None);
 
         let pos = Point { x: 0, y: 0 };
         let dest = Point { x: 5, y: 0 }; // x_distance = 5 (>= medium threshold = 3)
@@ -287,7 +290,7 @@ mod tests {
             Moving::new(pos, dest, false, None).timeout_started(true),
         ));
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(player.state, Player::Adjusting(_));
         assert_eq!(
@@ -302,7 +305,7 @@ mod tests {
         keys.expect_send_key_up().with(eq(KeyKind::Right)).once();
         keys.expect_send_key_down().with(eq(KeyKind::Left)).once();
 
-        let resources = Resources::new(Some(keys), None);
+        let mut resources = Resources::new(Some(keys), None);
 
         let pos = Point { x: 10, y: 0 };
         let dest = Point { x: 0, y: 0 }; // x_distance = 10
@@ -311,7 +314,7 @@ mod tests {
             Moving::new(pos, dest, false, None).timeout_started(true),
         ));
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(player.state, Player::Adjusting(_));
         assert_eq!(
@@ -326,7 +329,7 @@ mod tests {
         keys.expect_send_key_up().with(eq(KeyKind::Left)).once();
         keys.expect_send_key_up().with(eq(KeyKind::Right)).once();
 
-        let resources = Resources::new(Some(keys), None);
+        let mut resources = Resources::new(Some(keys), None);
 
         let pos = Point { x: 5, y: 0 };
         let dest = Point { x: 5, y: 0 }; // same position, no direction
@@ -335,7 +338,7 @@ mod tests {
             Moving::new(pos, dest, false, None).timeout_started(true),
         ));
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(
             player.state,
@@ -353,9 +356,15 @@ mod tests {
     fn update_adjusting_state_updated_short_adjustment_started() {
         let mut keys = MockInput::default();
         keys.expect_send_key_up().with(eq(KeyKind::Left)).once();
-        keys.expect_send_key().with(eq(KeyKind::Right)).once();
+        keys.expect_send_key_up().with(eq(KeyKind::Right)).once();
+        keys.expect_send_key_with_options()
+            .with(
+                eq(KeyKind::Right),
+                eq(InputKeyOptions::default().down_ms(80)),
+            )
+            .once();
 
-        let resources = Resources::new(Some(keys), None);
+        let mut resources = Resources::new(Some(keys), None);
 
         let pos = Point { x: 0, y: 0 };
         let dest = Point { x: 1, y: 0 }; // exact = true, x_distance = 1
@@ -364,7 +373,7 @@ mod tests {
             Moving::new(pos, dest, true, None).timeout_started(true),
         ));
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(
             player.state,
@@ -381,7 +390,7 @@ mod tests {
 
     #[test]
     fn update_adjusting_state_updated_timeout_freezes_when_adjusting_started() {
-        let resources = Resources::new(None, None);
+        let mut resources = Resources::new(None, None);
         let pos = Point { x: 0, y: 0 };
         let dest = Point { x: 1, y: 0 };
         let mut player = mock_player_entity(pos);
@@ -397,7 +406,7 @@ mod tests {
         };
         player.state = Player::Adjusting(adjusting);
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(
             player.state,
@@ -413,7 +422,7 @@ mod tests {
 
     #[test]
     fn update_adjusting_state_updated_complted_exact_not_close_enough_keeps_adjusting() {
-        let resources = Resources::new(None, None);
+        let mut resources = Resources::new(None, None);
         let pos = Point { x: 0, y: 0 };
         let dest = Point { x: 1, y: 0 };
         let mut player = mock_player_entity(pos);
@@ -424,7 +433,7 @@ mod tests {
             .timeout_started(true);
         player.state = Player::Adjusting(Adjusting::new(moving));
 
-        update_adjusting_state(&resources, &mut player, Minimap::Detecting);
+        update_adjusting_state(&mut resources, &mut player, Minimap::Detecting);
 
         assert_matches!(
             player.state,

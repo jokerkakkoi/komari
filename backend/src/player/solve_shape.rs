@@ -1,4 +1,9 @@
-use std::{cell::RefCell, rc::Rc, sync::Arc};
+use std::{
+    cell::RefCell,
+    fmt::{self, Display},
+    rc::Rc,
+    sync::Arc,
+};
 
 use anyhow::Result;
 use log::debug;
@@ -40,6 +45,16 @@ pub struct SolvingShape {
     lie_detector_task: Rc<RefCell<Option<Task<Result<bool>>>>>,
 }
 
+impl Display for SolvingShape {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.state {
+            State::Waiting => write!(f, "Waiting"),
+            State::Solving(_) => write!(f, "Solving"),
+            State::Completed => write!(f, "Completed"),
+        }
+    }
+}
+
 impl Drop for SolvingShape {
     fn drop(&mut self) {
         if let Some(solving) = self.solving.as_mut() {
@@ -52,7 +67,7 @@ impl Drop for SolvingShape {
 ///
 /// Note: This state does not use any [`Task`], so all detections are blocking. But this should be
 /// acceptable for this state.
-pub fn update_solving_shape_state(resources: &Resources, player: &mut PlayerEntity) {
+pub fn update_solving_shape_state(resources: &mut Resources, player: &mut PlayerEntity) {
     let Player::SolvingShape(mut solving_shape) = player.state.clone() else {
         panic!("state is not solving shape");
     };
@@ -82,7 +97,7 @@ pub fn update_solving_shape_state(resources: &Resources, player: &mut PlayerEnti
     }
 }
 
-fn update_waiting(resources: &Resources, solving_shape: &mut SolvingShape) {
+fn update_waiting(resources: &mut Resources, solving_shape: &mut SolvingShape) {
     const CHECK_INTERVAL: u64 = 30;
 
     let State::Waiting = solving_shape.state else {
@@ -112,7 +127,7 @@ fn update_waiting(resources: &Resources, solving_shape: &mut SolvingShape) {
     solving_shape.state = State::Solving(Timeout::default());
 }
 
-fn update_solving(resources: &Resources, solving_shape: &mut SolvingShape) {
+fn update_solving(resources: &mut Resources, solving_shape: &mut SolvingShape) {
     let State::Solving(timeout) = solving_shape.state else {
         panic!("solving shape state is not solving")
     };
@@ -150,7 +165,7 @@ fn update_solving(resources: &Resources, solving_shape: &mut SolvingShape) {
 
 fn start_solving_task(region: Rect) -> Solving {
     let (cursor_tx, cursor_rx) = mpsc::channel(1);
-    let (detector_tx, mut detector_rx) = mpsc::channel::<Arc<dyn Detector>>(2);
+    let (detector_tx, mut detector_rx) = mpsc::channel::<Arc<dyn Detector>>(3);
 
     let task = Task::spawn_blocking(move || {
         let mut solver = TransparentShapeSolver::default();

@@ -106,7 +106,9 @@ pub enum Player {
     /// Tries to solve a rune.
     SolvingRune(SolvingRune),
     /// Tries to solve lie detector's transparent shape.
+    #[strum(to_string = "SolvingShape({0})")]
     SolvingShape(SolvingShape),
+    #[strum(to_string = "SolvingVioletta({0})")]
     SolvingVioletta(SolvingVioletta),
     /// Enters the cash shop then exit after 10 seconds.
     CashShopThenExit(CashShop),
@@ -162,7 +164,7 @@ impl Player {
 }
 
 pub fn run_system(
-    resources: &Resources,
+    resources: &mut Resources,
     player: &mut PlayerEntity,
     minimap: &MinimapEntity,
     buffs: &BuffEntities,
@@ -231,7 +233,7 @@ pub fn run_system(
 /// Returns `true` if state is updated.
 #[inline]
 fn update_non_positional_state(
-    resources: &Resources,
+    resources: &mut Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
     failed_to_detect_player: bool,
@@ -285,7 +287,7 @@ fn update_non_positional_state(
 /// Updates the contextual state that requires the player current position.
 #[inline]
 fn update_positional_state(
-    resources: &Resources,
+    resources: &mut Resources,
     player: &mut PlayerEntity,
     minimap_state: Minimap,
 ) {
