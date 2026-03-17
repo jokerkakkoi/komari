@@ -280,7 +280,7 @@ fn SectionNotifications() -> Element {
                             },
                             value: notifications().webhook_url,
                         }
-                        
+
                     },
                 }
             }
