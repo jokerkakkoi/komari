@@ -25,7 +25,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-use crate::{Settings, WebhookProvider};
+use crate::{Notifications, Settings, WebhookProvider};
 
 static TRUE: bool = true;
 static FALSE: bool = false;
@@ -208,27 +208,24 @@ impl ScheduledNotification {
     fn new(
         instant: Instant,
         kind: NotificationKind,
-        webhook_url: &str,
-        provider: WebhookProvider,
+        notifications: &Notifications,
         content: String,
         username: &'static str,
         frames: Vec<ScheduledFrame>,
-        feishu_app_id: String,
-        feishu_app_secret: String,
-        feishu_user_mobile: String,
     ) -> Result<Self, Error> {
+        let provider = notifications.webhook_provider;
         let (url, feishu_app_id, feishu_app_secret, feishu_user_mobile) = match provider {
             WebhookProvider::Discord => {
-                let Ok(url) = Url::try_from(webhook_url) else {
+                let Ok(url) = Url::try_from(notifications.webhook_url.as_str()) else {
                     bail!("failed to parse webhook url");
                 };
 
                 (url, String::new(), String::new(), String::new())
             }
             WebhookProvider::Feishu => {
-                if feishu_app_id.is_empty()
-                    || feishu_app_secret.is_empty()
-                    || feishu_user_mobile.is_empty()
+                if notifications.feishu_app_id.is_empty()
+                    || notifications.feishu_app_secret.is_empty()
+                    || notifications.feishu_user_mobile.is_empty()
                 {
                     bail!(
                         "feishu_app_id, feishu_app_secret and feishu_user_mobile cannot be empty"
@@ -239,7 +236,12 @@ impl ScheduledNotification {
                 // Keep a placeholder URL to satisfy ScheduledNotification shape.
                 let url = Url::parse("http://localhost").expect("invalid placeholder url");
 
-                (url, feishu_app_id, feishu_app_secret, feishu_user_mobile)
+                (
+                    url,
+                    notifications.feishu_app_id.clone(),
+                    notifications.feishu_app_secret.clone(),
+                    notifications.feishu_user_mobile.clone(),
+                )
             }
         };
 
@@ -315,20 +317,15 @@ impl Notification {
                 bail!("notification is already sending");
             }
 
-            let provider = settings.notifications.webhook_provider;
             let content = kind.content(&settings);
             let frames = kind.scheduled_frames();
             let notification = ScheduledNotification::new(
                 Instant::now(),
                 kind,
-                settings.notifications.webhook_url.as_str(),
-                provider,
+                &settings.notifications,
                 content,
                 "Komari",
                 frames,
-                settings.notifications.feishu_app_id.clone(),
-                settings.notifications.feishu_app_secret.clone(),
-                settings.notifications.feishu_user_mobile.clone(),
             )?;
             let mut scheduled = self.scheduled.lock().unwrap();
             scheduled.push(notification);
