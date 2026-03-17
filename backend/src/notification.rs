@@ -23,6 +23,7 @@ use tokio::{
     spawn,
     time::{Instant, sleep},
 };
+use uuid::Uuid;
 
 use crate::{Settings, WebhookProvider};
 
@@ -195,6 +196,66 @@ struct ScheduledNotification {
     /// `before and after` when map changes. So frame that cannot capture when the deadline is
     /// reached will be skipped.
     frames: Vec<ScheduledFrame>,
+    /// The feishu app_id
+    feishu_app_id: String,
+    /// The feishu app_secret
+    feishu_app_secret: String,
+    /// The feishu user mobile
+    feishu_user_mobile: String,
+}
+
+impl ScheduledNotification {
+    fn new(
+        instant: Instant,
+        kind: NotificationKind,
+        webhook_url: &str,
+        provider: WebhookProvider,
+        content: String,
+        username: &'static str,
+        frames: Vec<ScheduledFrame>,
+        feishu_app_id: String,
+        feishu_app_secret: String,
+        feishu_user_mobile: String,
+    ) -> Result<Self, Error> {
+        let (url, feishu_app_id, feishu_app_secret, feishu_user_mobile) = match provider {
+            WebhookProvider::Discord => {
+                let Ok(url) = Url::try_from(webhook_url) else {
+                    bail!("failed to parse webhook url");
+                };
+
+                (url, String::new(), String::new(), String::new())
+            }
+            WebhookProvider::Feishu => {
+                if feishu_app_id.is_empty()
+                    || feishu_app_secret.is_empty()
+                    || feishu_user_mobile.is_empty()
+                {
+                    bail!(
+                        "feishu_app_id, feishu_app_secret and feishu_user_mobile cannot be empty"
+                    );
+                }
+
+                // Feishu does not require webhook_url in constructor validation path.
+                // Keep a placeholder URL to satisfy ScheduledNotification shape.
+                let url = Url::parse("http://localhost").expect("invalid placeholder url");
+
+                (url, feishu_app_id, feishu_app_secret, feishu_user_mobile)
+            }
+        };
+
+        Ok(Self {
+            instant,
+            kind,
+            url,
+            provider,
+            content,
+            username,
+            frames,
+            feishu_app_id,
+            feishu_app_secret,
+            feishu_user_mobile,
+        })
+    }
 }
 
 #[derive(Debug)]
@@ -255,22 +316,22 @@ impl Notification {
             }
 
             let provider = settings.notifications.webhook_provider;
-            let Ok(url) = Url::try_from(settings.notifications.webhook_url.as_str()) else {
-                bail!("failed to parse webhook url");
-            };
-
             let content = kind.content(&settings);
             let frames = kind.scheduled_frames();
-            let mut scheduled = self.scheduled.lock().unwrap();
-            scheduled.push(ScheduledNotification {
-                instant: Instant::now(),
+            let notification = ScheduledNotification::new(
+                Instant::now(),
                 kind,
-                url,
+                settings.notifications.webhook_url.as_str(),
                 provider,
                 content,
-                username: "Komari",
+                "Komari",
                 frames,
-            });
+                settings.notifications.feishu_app_id.clone(),
+                settings.notifications.feishu_app_secret.clone(),
+                settings.notifications.feishu_user_mobile.clone(),
+            )?;
+            let mut scheduled = self.scheduled.lock().unwrap();
+            scheduled.push(notification);
             pending.set(kind.into(), true);
         }
 
@@ -399,24 +460,142 @@ async fn post_feishu_notification(
     client: Client,
     notification: ScheduledNotification,
 ) -> Result<(), Error> {
-    let body: Value = json!({
-        "msg_type": "text",
-        "content": {
-            "text": format!("{} from {}", notification.content, notification.username),
-        },
-    });
-    let _ = client
-        .post(notification.url)
-        .header("Content-Type", "application/json")
-        .body(serde_json::to_string(&body).unwrap())
+    let ScheduledNotification {
+        kind,
+        content,
+        username,
+        frames,
+        feishu_app_id,
+        feishu_app_secret,
+        feishu_user_mobile,
+        ..
+    } = notification;
+
+    let token_resp = client
+        .post("https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal")
+        .header("Content-Type", "application/json; charset=utf-8")
+        .json(&json!({
+            "app_id": feishu_app_id,
+            "app_secret": feishu_app_secret,
+        }))
         .send()
-        .await
-        .inspect(|_| {
-            debug!(target: "notification", "calling Webhook API {:?} succeeded", notification.kind);
-        })
-        .inspect_err(|err| {
-            error!(target: "notification", "calling Webhook API failed {err}");
-        });
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    if token_resp.get("code").and_then(Value::as_i64) != Some(0) {
+        bail!("feishu get tenant_access_token failed: {token_resp}");
+    }
+    let Some(tenant_access_token) = token_resp
+        .get("tenant_access_token")
+        .and_then(Value::as_str)
+        .map(ToOwned::to_owned)
+    else {
+        bail!("feishu tenant_access_token missing from response");
+    };
+
+    let mut image_keys = vec![];
+    for (i, frame) in frames
+        .into_iter()
+        .filter_map(|scheduled_frame| scheduled_frame.inner)
+        .enumerate()
+    {
+        let form = Form::new().text("image_type", "message").part(
+            "image",
+            Part::bytes(frame)
+                .file_name(format!("image_{i}.png"))
+                .mime_str("image/png")
+                .unwrap(),
+        );
+
+        let upload_resp = client
+            .post("https://open.feishu.cn/open-apis/im/v1/images")
+            .bearer_auth(&tenant_access_token)
+            .multipart(form)
+            .send()
+            .await?
+            .error_for_status()?
+            .json::<Value>()
+            .await?;
+        if upload_resp.get("code").and_then(Value::as_i64) != Some(0) {
+            bail!("feishu upload image failed: {upload_resp}");
+        }
+
+        let Some(image_key) = upload_resp
+            .get("data")
+            .and_then(|data| data.get("image_key"))
+            .and_then(Value::as_str)
+        else {
+            bail!("feishu image_key missing from upload response");
+        };
+        image_keys.push(image_key.to_string());
+    }
+
+    let user_resp = client
+        .post("https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id")
+        .header("Content-Type", "application/json")
+        .bearer_auth(&tenant_access_token)
+        .json(&json!({
+            "include_resigned": true,
+            "mobiles": [feishu_user_mobile],
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    if user_resp.get("code").and_then(Value::as_i64) != Some(0) {
+        bail!("feishu get user_id failed: {user_resp}");
+    }
+
+    let Some(user_id) = user_resp
+        .get("data")
+        .and_then(|data| data.get("user_list"))
+        .and_then(Value::as_array)
+        .and_then(|user_list| user_list.first())
+        .and_then(|user| user.get("user_id"))
+        .and_then(Value::as_str)
+    else {
+        bail!("feishu user_id missing from response");
+    };
+
+    let mut post_content_lines = vec![vec![json!({
+        "tag": "text",
+        "text": format!("{content} from {username}"),
+    })]];
+    for image_key in image_keys {
+        post_content_lines.push(vec![json!({
+            "tag": "img",
+            "image_key": image_key,
+        })]);
+    }
+
+    let message_resp = client
+        .post("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=open_id")
+        .header("Content-Type", "application/json; charset=utf-8")
+        .bearer_auth(&tenant_access_token)
+        .json(&json!({
+            "content": serde_json::to_string(&json!({
+                "zh_cn": {
+                    "title": "Komari!",
+                    "content": post_content_lines,
+                }
+            }))
+            .unwrap(),
+            "msg_type": "post",
+            "receive_id": user_id,
+            "uuid": Uuid::new_v4().to_string(),
+        }))
+        .send()
+        .await?
+        .error_for_status()?
+        .json::<Value>()
+        .await?;
+    if message_resp.get("code").and_then(Value::as_i64) != Some(0) {
+        bail!("feishu send message failed: {message_resp}");
+    }
+
+    debug!(target: "notification", "calling Feishu API {:?} succeeded", kind);
 
     Ok(())
 }
@@ -500,6 +679,9 @@ mod test {
                 ScheduledFrame::new_deadline(6),
                 ScheduledFrame::new_deadline(9),
             ],
+            feishu_app_id: String::new(),
+            feishu_app_secret: String::new(),
+            feishu_user_mobile: String::new(),
         });
 
         advance(Duration::from_secs(4)).await;
