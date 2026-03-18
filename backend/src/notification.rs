@@ -570,7 +570,7 @@ async fn post_feishu_notification(
             "uuid": Uuid::new_v4().to_string(),
         }))
         .send()
-        .await?
+        .await
         .inspect_err(|err| {
             error!(target: "backend/notification", "calling Feishu auth API failed {err}");
         })?
