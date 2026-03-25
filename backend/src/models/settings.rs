@@ -131,7 +131,7 @@ pub struct Notifications {
     pub webhook_provider: WebhookProvider,
     pub feishu_app_id: String,
     pub feishu_app_secret: String,
-    pub feishu_user_mobile: String,
+    pub feishu_open_id: String,
     pub notify_on_fail_or_change_map: bool,
     pub notify_on_rune_appear: bool,
     pub notify_on_elite_boss_appear: bool,

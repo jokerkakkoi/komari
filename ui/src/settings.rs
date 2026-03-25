@@ -248,7 +248,7 @@ fn SectionNotifications() -> Element {
                                     ..settings.peek().clone()
                                 });
                             },
-                            value: notifications().webhook_url,
+                            value: notifications().feishu_app_id,
                         },
                         SettingsTextInput {
                             text_label: "App Secret",
@@ -263,22 +263,22 @@ fn SectionNotifications() -> Element {
                                     ..settings.peek().clone()
                                 });
                             },
-                            value: notifications().webhook_url,
+                            value: notifications().feishu_app_secret,
                         },
                         SettingsTextInput {
-                            text_label: "user mobile",
+                            text_label: "Open ID",
                             button_label: "Update",
                             sensitive: true,
-                            on_value: move |feishu_user_mobile| {
+                            on_value: move |feishu_open_id| {
                                 save_settings(Settings {
                                     notifications: Notifications {
-                                        feishu_user_mobile,
+                                        feishu_open_id,
                                         ..notifications.peek().clone()
                                     },
                                     ..settings.peek().clone()
                                 });
                             },
-                            value: notifications().webhook_url,
+                            value: notifications().feishu_open_id,
                         }
 
                     },

@@ -225,18 +225,16 @@ impl ScheduledNotification {
             WebhookProvider::Feishu => {
                 if notifications.feishu_app_id.is_empty()
                     || notifications.feishu_app_secret.is_empty()
-                    || notifications.feishu_user_mobile.is_empty()
+                    || notifications.feishu_open_id.is_empty()
                 {
-                    bail!(
-                        "feishu_app_id, feishu_app_secret and feishu_user_mobile cannot be empty"
-                    );
+                    bail!("feishu_app_id, feishu_app_secret and feishu_open_id cannot be empty");
                 }
                 let url = Url::parse("https://example.com").unwrap();
                 (
                     url,
                     notifications.feishu_app_id.clone(),
                     notifications.feishu_app_secret.clone(),
-                    notifications.feishu_user_mobile.clone(),
+                    notifications.feishu_open_id.clone(),
                 )
             }
         };
@@ -515,34 +513,6 @@ async fn post_feishu_notification(
         image_keys.push(image_key);
     }
 
-    let user_resp = client
-        .post("https://open.feishu.cn/open-apis/contact/v3/users/batch_get_id?user_id_type=open_id")
-        .bearer_auth(&tenant_access_token)
-        .json(&json!({
-            "include_resigned": true,
-            "mobiles": [notification.feishu_user_mobile],
-        }))
-        .send()
-        .await
-        .inspect_err(|err| {
-            error!(target: "backend/notification", "calling Feishu auth API failed {err}");
-        })?
-        .json::<Value>()
-        .await?;
-    let user_id = match (
-        user_resp.get("code").and_then(Value::as_i64),
-        user_resp
-            .get("data")
-            .and_then(|data| data.get("user_list"))
-            .and_then(Value::as_array)
-            .and_then(|user_list| user_list.first())
-            .and_then(|user| user.get("user_id"))
-            .and_then(Value::as_str),
-    ) {
-        (Some(0), Some(user_id)) => user_id,
-        _ => bail!("feishu get user_id failed: {user_resp}"),
-    };
-
     let mut post_content_lines = vec![vec![json!({
         "tag": "text",
         "text": notification.content,
@@ -560,13 +530,12 @@ async fn post_feishu_notification(
         .json(&json!({
             "content": serde_json::to_string(&json!({
                 "zh_cn": {
-                    "title": "Komari!",
                     "content": post_content_lines,
                 }
             }))
             .unwrap(),
             "msg_type": "post",
-            "receive_id": user_id,
+            "receive_id": notification.feishu_open_id,
             "uuid": Uuid::new_v4().to_string(),
         }))
         .send()
