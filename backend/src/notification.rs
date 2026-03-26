@@ -201,7 +201,7 @@ struct ScheduledNotification {
     /// The feishu app_secret
     feishu_app_secret: String,
     /// The feishu user mobile
-    feishu_user_mobile: String,
+    feishu_open_id: String,
 }
 
 impl ScheduledNotification {
@@ -249,7 +249,7 @@ impl ScheduledNotification {
             frames,
             feishu_app_id,
             feishu_app_secret,
-            feishu_user_mobile,
+            feishu_open_id,
         })
     }
 }
@@ -630,7 +630,7 @@ mod test {
             ],
             feishu_app_id: String::new(),
             feishu_app_secret: String::new(),
-            feishu_user_mobile: String::new(),
+            feishu_open_id: String::new(),
         });
 
         advance(Duration::from_secs(4)).await;
