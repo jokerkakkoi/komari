@@ -214,7 +214,7 @@ impl ScheduledNotification {
         frames: Vec<ScheduledFrame>,
     ) -> Result<Self, Error> {
         let provider = notifications.webhook_provider;
-        let (url, feishu_app_id, feishu_app_secret, feishu_user_mobile) = match provider {
+        let (url, feishu_app_id, feishu_app_secret, feishu_open_id) = match provider {
             WebhookProvider::Discord => {
                 let Ok(url) = Url::try_from(notifications.webhook_url.as_str()) else {
                     bail!("failed to parse webhook url");
